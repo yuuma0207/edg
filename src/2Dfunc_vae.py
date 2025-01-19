@@ -87,55 +87,38 @@ class VAE(nn.Module):
 
     def forward(self, x):
         # エンコード
-        mu_z, logvar_z = self.encoder(x)
+        mu_z, logvar_z = self.encoder(x) # このxはQ(x|z)のxでいい？
         # サンプリング
         z = self.reparameterize(mu_z, logvar_z)
         # デコード
         mu_x, logvar_x = self.decoder(z)
         return mu_x, logvar_x, mu_z, logvar_z
-    
-    # U(x) = min(u_1, u_2, u_3, u_4, u_5)
-    # u_i = (\sqrt{x^2+y^2} - i)^2 / 0.04
-    def ring5(x,y):
-        divide = 0.04
-        u_1 = (math.sqrt(x**2 + y**2) - 1)**2 / divide
-        u_2 = (math.sqrt(x**2 + y**2) - 2)**2 / divide
-        u_3 = (math.sqrt(x**2 + y**2) - 3)**2 / divide
-        u_4 = (math.sqrt(x**2 + y**2) - 4)**2 / divide
-        u_5 = (math.sqrt(x**2 + y**2) - 5)**2 / divide
-        return min(u_1, u_2, u_3, u_4, u_5)
-    
-class MoGSampler():
-    def __init__(self, n_mixture, dim=2):
-        self.n_mixture = n_mixture
-        self.dim = dim
-    
-    def sample(self, n_samples):
-        # 重み
-        weights = np.random.dirichlet([1.0] * self.n_mixture, n_samples)
-        # カテゴリカル分布からクラスタをサンプリング
-        cluster = np.array([np.random.choice(self.n_mixture, p=w) for w in weights])
-        # 各クラスタごとに正規分布からサンプリング
-        samples = np.random.randn(n_samples, self.dim) + cluster[:, None]
-        return samples
-
 
 
 
 # --------------------------------------------------------
-# 3. 損失関数 (ELBO の簡易実装)
+# 3. 損失関数
 # --------------------------------------------------------
-def loss_function(x, mu_x, logvar_x, mu_z, logvar_z):
+def loss_function(x_batch, z_batch, mu_x, logvar_x, mu_z, logvar_z, U):
     """
-    VAEの損失 (Reconstruction Loss + KL Divergence)
+    VAEの損失 
+    L = 1/2 * E_{Q(x|z)}[L_1(x)] + E_{Q(x|z)pi(z)}[L_2(x)]
+    L_1(x) = log(σ_φ^2) + d/σ_φ^2 + |μ_φ|^2/σ_φ^2
+    L_2(x) = log(Q(x|z)) + U(x)
     """
-    # 再構成誤差 (平均的に計算)
-    # Normal(x|mu_x, diag(exp(logvar_x))) の対数尤度を計算
-    recon_loss = 0.5 * (logvar_x + (x - mu_x)**2 / torch.exp(logvar_x)).sum(dim=1)
-    # z の KL
-    kl_loss = -0.5 * torch.sum(1 + logvar_z - mu_z.pow(2) - logvar_z.exp(), dim=1)
-    # バッチ平均
-    return (recon_loss + kl_loss).mean()
+    d = z_batch.shape[1] # z.shape: (batch_size, z_dim)
+    dist = Normal(mu_z, torch.exp(0.5 * logvar_z))
+
+    # L1 = log(σ_φ^2) + d/σ_φ^2 + |μ_φ|^2/σ_φ^2
+    # batch_sizeのTensorになる
+    L1 = 0.5 * (logvar_x + d/torch.exp(logvar_x) + torch.norm(mu_x, dim=1)**2/torch.exp(logvar_x))
+
+    # L2 = log(Q(x|z)) + U(x)
+    # dist.log_prob(torch.tensor([1.0,2.0], [3.0,4.0]))を渡したときにどうなる？
+    L2 = dist.log_prob(x_batch) + U(x_batch)
+
+    return (L1.sum(dim=1) + L2.sum(dim=1)).mean()
+
 
 
 # --------------------------------------------------------
@@ -144,23 +127,25 @@ def loss_function(x, mu_x, logvar_x, mu_z, logvar_z):
 def train_vae(model, data_loader, epochs=10, lr=1e-3):
     optimizer = optim.Adam(model.parameters(), lr=lr)
     
-    for epoch in range(epochs):
+    for epoch in range(epochs): # 1エポックでQ(x|z)を更新する
         model.train()
         total_loss = 0.0
-        for x_batch in data_loader:
-            x_batch = x_batch.to(next(model.parameters()).device)
-            
-            # 順伝播
-            mu_x, logvar_x, mu_z, logvar_z = model(x_batch)
-            # 損失
-            loss = loss_function(x_batch, mu_x, logvar_x, mu_z, logvar_z)
-            
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            
-            total_loss += loss.item()
+        batch_size = 64
+
+        z_batch = torch.randn(batch_size, 2) # N(0, I) からサンプリング
+        x_batch = model.decoder(z_batch)
         
+        # 順伝播
+        mu_x, logvar_x, mu_z, logvar_z = model(x_batch)
+        # 損失
+        loss = loss_function(x_batch, z_batch, mu_x, logvar_x, mu_z, logvar_z)
+        
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        
+        total_loss += loss.item()
+    
         avg_loss = total_loss / len(data_loader)
         print(f"[Epoch {epoch+1}/{epochs}] loss: {avg_loss:.4f}")
 
