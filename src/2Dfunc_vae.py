@@ -46,9 +46,9 @@ class Encoder(nn.Module):
 
 class Decoder(nn.Module):
     """
-    z -> (mu_x, logvar_x)
+    z -> (mu_z, logvar_z)
     """
-    def __init__(self, z_dim=2, x_dim=2, hidden_dim=32):
+    def __init__(self, z_dim:int = 2, x_dim:int = 2, hidden_dim:int = 32):
         super(Decoder, self).__init__()
         
         # 3層 MLP (各層 32ユニット, ReLU)
@@ -66,23 +66,23 @@ class Decoder(nn.Module):
         # 再構成のlogvar
         self.fc_logvar = nn.Linear(hidden_dim, x_dim)
 
-    def forward(self, z):
+    def forward(self, z: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         h = self.net(z)
-        mu_x = self.fc_mu(h)
-        logvar_x = self.fc_logvar(h)
-        return mu_x, logvar_x
+        mu_z = self.fc_mu(h)
+        logvar_z = self.fc_logvar(h)
+        return mu_z, logvar_z
 
 
 # --------------------------------------------------------
 # 2. VAE モデルの定義
 # --------------------------------------------------------
 class VAE(nn.Module):
-    def __init__(self, x_dim=2, z_dim=2, hidden_dim=32):
+    def __init__(self, x_dim:int = 2, z_dim:int = 2, hidden_dim:int = 32):
         super(VAE, self).__init__()
         self.encoder = Encoder(x_dim, z_dim, hidden_dim)
         self.decoder = Decoder(z_dim, x_dim, hidden_dim)
 
-    def reparameterize(self, mu, logvar):
+    def reparameterize(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
         """
         Reparameterization trick:
           z = mu + sigma * eps
@@ -92,7 +92,7 @@ class VAE(nn.Module):
         eps = torch.randn_like(std)
         return mu + eps * std
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         # エンコード
         mu_x, logvar_x = self.encoder(x) # このxはQ(x|z)のxでいい？
         # サンプリング
