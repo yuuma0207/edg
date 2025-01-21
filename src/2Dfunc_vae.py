@@ -1,18 +1,16 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.distributions import Normal, OneHotCategorical
-import numpy as np
-import math
+from energyfunction import ring5
+from typing import Tuple
 
-# --------------------------------------------------------
-# 1. Encoder / Decoder の定義
-# --------------------------------------------------------
+
 class Encoder(nn.Module):
     """
-    MLPベースのEncoder: x -> (mu_z, logvar_z)
+    P_φ(z|x)
+    x -> (mu_x, logvar_x)
     """
-    def __init__(self, x_dim=2, z_dim=2, hidden_dim=32):
+    def __init__(self, x_dim: int = 2, z_dim: int = 2, hidden_dim: int =32):
         super(Encoder, self).__init__()
         
         # 3層 MLP (各層 32ユニット, ReLU)
@@ -30,16 +28,25 @@ class Encoder(nn.Module):
         # 対角共分散(ここではlogvarを出力)
         self.fc_logvar = nn.Linear(hidden_dim, z_dim)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Args:
+            x (torch.Tensor): 入力データ (shape: [batch_size, x_dim])
+
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor]: 平均ベクトル (mu_x) と対角共分散の対数 (logvar_x)
+            - mu_x: shape [batch_size, z_dim]
+            - logvar_x: shape [batch_size, z_dim]
+        """
         h = self.net(x)
-        mu_z = self.fc_mu(h)
-        logvar_z = self.fc_logvar(h)
-        return mu_z, logvar_z
+        mu_x = self.fc_mu(h)
+        logvar_x = self.fc_logvar(h)
+        return mu_x, logvar_x
 
 
 class Decoder(nn.Module):
     """
-    MLPベースのDecoder: z -> (mu_x, logvar_x)
+    z -> (mu_x, logvar_x)
     """
     def __init__(self, z_dim=2, x_dim=2, hidden_dim=32):
         super(Decoder, self).__init__()
@@ -87,37 +94,49 @@ class VAE(nn.Module):
 
     def forward(self, x):
         # エンコード
-        mu_z, logvar_z = self.encoder(x) # このxはQ(x|z)のxでいい？
+        mu_x, logvar_x = self.encoder(x) # このxはQ(x|z)のxでいい？
         # サンプリング
         z = self.reparameterize(mu_z, logvar_z)
         # デコード
-        mu_x, logvar_x = self.decoder(z)
+        mu_z, logvar_z = self.decoder(z)
         return mu_x, logvar_x, mu_z, logvar_z
 
 
 
 # --------------------------------------------------------
 # 3. 損失関数
+# mu_x: μ_φ(x), logvar_x: log(σ_φ^2(x))
+# mu_z: μ_θ(z), logvar_z: log(σ_θ^2(z))
 # --------------------------------------------------------
-def loss_function(x_batch, z_batch, mu_x, logvar_x, mu_z, logvar_z, U):
+def loss_function(x_batch, z_batch, mu_x, logvar_x, mu_z, logvar_z, energy_function):
     """
     VAEの損失 
-    L = 1/2 * E_{Q(x|z)}[L_1(x)] + E_{Q(x|z)pi(z)}[L_2(x)]
-    L_1(x) = log(σ_φ^2) + d/σ_φ^2 + |μ_φ|^2/σ_φ^2
-    L_2(x) = log(Q(x|z)) + U(x)
+    L = 1/2 * (E_{Q(x|z)}[L_1(x)] - 1/2 * E_{Q(x|z)pi(z)}[L_2(x)])
+
+    L1 = log(σ(x)^2) + (μ_x^2 + 1)/σ(x)^2
+
+    L2 = (x - μ_z)^2)/σ_z^2 + abs(σ_z^2) - 2U(x)
+    
+    # x_batch: (batch_size, x_dim)
+    # z_batch: (batch_size, z_dim)
+    # mu_x: (batch_size, x_dim)
+    # logvar_x: (batch_size, x_dim)
+    # mu_z: (batch_size, z_dim)
+    # logvar_z: (batch_size, z_dim)
+    # U: (batch_size, 1)
     """
     d = z_batch.shape[1] # z.shape: (batch_size, z_dim)
-    dist = Normal(mu_z, torch.exp(0.5 * logvar_z))
 
-    # L1 = log(σ_φ^2) + d/σ_φ^2 + |μ_φ|^2/σ_φ^2
-    # batch_sizeのTensorになる
-    L1 = 0.5 * (logvar_x + d/torch.exp(logvar_x) + torch.norm(mu_x, dim=1)**2/torch.exp(logvar_x))
+    # L1 = log(σ(x)^2) + (μ_x^2 + 1)/σ(x)^2
+    # L2 = (x - μ_z)^2)/σ_z^2 + abs(σ_z^2) + U(x)
 
-    # L2 = log(Q(x|z)) + U(x)
-    # dist.log_prob(torch.tensor([1.0,2.0], [3.0,4.0]))を渡したときにどうなる？
-    L2 = dist.log_prob(x_batch) + U(x_batch)
+    L1 = torch.sum(logvar_x + (mu_x**2 + 1)/torch.exp(logvar_x))
 
-    return (L1.sum(dim=1) + L2.sum(dim=1)).mean()
+    L2 = torch.sum((x_batch - mu_z)**2/torch.exp(logvar_z))
+    L2 += torch.sum(torch.abs(torch.exp(logvar_z)))
+    L2 += -2.0*torch.sum(energy_function(x_batch))
+
+    return (L1 - L2)/len(x_batch)
 
 
 
@@ -133,12 +152,12 @@ def train_vae(model, data_loader, epochs=10, lr=1e-3):
         batch_size = 64
 
         z_batch = torch.randn(batch_size, 2) # N(0, I) からサンプリング
-        x_batch = model.decoder(z_batch)
+        x_batch = model.decoder(z_batch) # (batch_size, x_dim)
         
         # 順伝播
         mu_x, logvar_x, mu_z, logvar_z = model(x_batch)
         # 損失
-        loss = loss_function(x_batch, z_batch, mu_x, logvar_x, mu_z, logvar_z)
+        loss = loss_function(x_batch, z_batch, mu_x, logvar_x, mu_z, logvar_z, ring5.U_ring5)
         
         optimizer.zero_grad()
         loss.backward()
