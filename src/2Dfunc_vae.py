@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 import matplotlib.pyplot as plt
 from energyfunction import ring5
+from energyfunction import MoG2, MoG9
 from typing import Tuple
 from tqdm import tqdm
 import os
@@ -151,7 +152,9 @@ class VAE(nn.Module):
         mu_z, logvar_z = self.decoder(z_batch)
         x_batch = reparameterize(mu_z, logvar_z)
         mu_x, logvar_x = self.encoder(x_batch)
-        return loss_function(x_batch, z_batch, mu_x, logvar_x, mu_z, logvar_z, ring5.U_ring5)
+        # return loss_function(x_batch, z_batch, mu_x, logvar_x, mu_z, logvar_z, ring5.U_ring5)
+        return loss_function(x_batch, z_batch, mu_x, logvar_x, mu_z, logvar_z, MoG9.U_MoG9)
+
 
 
 
@@ -174,6 +177,8 @@ def train_vae(model: VAE, z_dim: int = 2, epochs: int =10, batch_size: int = 64,
     print(f"Decoder: {model.decoder}")
     print(f"Optimizer: {optimizer}")
     print(f"Loss function: {loss_function}")
+    # TODO Energy functionの指定方法を変える。train_vaeの引数に渡すか、model内に持たせるか。
+    # 後者の場合は、model内に持たせるとして、model内にenergy_functionを持たせる。
     print(f"Energy function: {ring5.U_ring5}")
     print(f"Training...")
     for epoch in tqdm(range(epochs)): # 1エポックでQ(x|z)を更新する
@@ -254,7 +259,7 @@ def main(now, epochs, batch_size, num_samples, is_sampling=False):
 if __name__ == "__main__":
     num_samples = 1000
     epochs = 1000
-    batch_size = 2048
+    batch_size = 1000000
     now = datetime.datetime.now()
 
     main(now, epochs, batch_size, num_samples, True)
