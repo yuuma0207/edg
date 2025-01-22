@@ -1,8 +1,10 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import matplotlib.pyplot as plt
 from energyfunction import ring5
 from typing import Tuple
+from tqdm import tqdm
 
 
 class Encoder(nn.Module):
@@ -10,10 +12,10 @@ class Encoder(nn.Module):
     P_φ(z|x)
     x -> (mu_x, logvar_x)
     """
-    def __init__(self, x_dim: int = 2, z_dim: int = 2, hidden_dim: int =32):
+    def __init__(self, x_dim: int = 2, z_dim: int = 2, hidden_dim: int = 32):
         super(Encoder, self).__init__()
         
-        # 3層 MLP (各層 32ユニット, ReLU)
+        # 3層 MLP (各層 32ユニット, ReLU)        
         self.net = nn.Sequential(
             nn.Linear(x_dim, hidden_dim),
             nn.ReLU(),
@@ -52,6 +54,9 @@ class Decoder(nn.Module):
         super(Decoder, self).__init__()
         
         # 3層 MLP (各層 32ユニット, ReLU)
+        print("z_dim", z_dim)
+        print("hidden_dim", hidden_dim)
+        print("x_dim", x_dim)
         self.net = nn.Sequential(
             nn.Linear(z_dim, hidden_dim),
             nn.ReLU(),
@@ -67,6 +72,7 @@ class Decoder(nn.Module):
         self.fc_logvar = nn.Linear(hidden_dim, x_dim)
 
     def forward(self, z: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        print(z.shape)
         h = self.net(z)
         mu_z = self.fc_mu(h)
         logvar_z = self.fc_logvar(h)
@@ -96,7 +102,7 @@ class VAE(nn.Module):
         # エンコード
         mu_x, logvar_x = self.encoder(x) # このxはQ(x|z)のxでいい？
         # サンプリング
-        z = self.reparameterize(mu_z, logvar_z)
+        z = self.reparameterize(mu_x, logvar_x)
         # デコード
         mu_z, logvar_z = self.decoder(z)
         return mu_x, logvar_x, mu_z, logvar_z
@@ -143,16 +149,18 @@ def loss_function(x_batch, z_batch, mu_x, logvar_x, mu_z, logvar_z, energy_funct
 # --------------------------------------------------------
 # 4. 学習ループ (簡易)
 # --------------------------------------------------------
-def train_vae(model, data_loader, epochs=10, lr=1e-3):
+def train_vae(model: VAE, z_dim: int = 2, epochs: int =10, lr: float =1e-3):
     optimizer = optim.Adam(model.parameters(), lr=lr)
     
-    for epoch in range(epochs): # 1エポックでQ(x|z)を更新する
+    for epoch in tqdm(range(epochs)): # 1エポックでQ(x|z)を更新する
         model.train()
         total_loss = 0.0
         batch_size = 64
 
-        z_batch = torch.randn(batch_size, 2) # N(0, I) からサンプリング
-        x_batch = model.decoder(z_batch) # (batch_size, x_dim)
+        z_batch = torch.randn(batch_size, z_dim) # N(0, I) からサンプリング
+        # 学習しないのでrequires_grad=False？
+        mu_z, logvar_z = model.decoder(z_batch)
+        x_batch = model.reparameterize(mu_z, logvar_z)
         
         # 順伝播
         mu_x, logvar_x, mu_z, logvar_z = model(x_batch)
@@ -165,29 +173,36 @@ def train_vae(model, data_loader, epochs=10, lr=1e-3):
         
         total_loss += loss.item()
     
-        avg_loss = total_loss / len(data_loader)
+        avg_loss = total_loss
         print(f"[Epoch {epoch+1}/{epochs}] loss: {avg_loss:.4f}")
 
 
 # --------------------------------------------------------
-# 5. DataLoader の例 (ダミーの 2D データ)
-# --------------------------------------------------------
-# ここでは乱数生成した 2D 点を使って例示
-# 実際には独自のデータセットに置き換えてください
-dummy_data = torch.randn(1000, 2)
-dataset = torch.utils.data.TensorDataset(dummy_data)
-data_loader = torch.utils.data.DataLoader(dataset, batch_size=32, shuffle=True)
-
-# --------------------------------------------------------
 # 6. 実際に VAE を作って学習
 # --------------------------------------------------------
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = VAE(x_dim=2, z_dim=2, hidden_dim=32).to(device)
 
-train_vae(model, data_loader, epochs=10, lr=1e-3)
+def main(num_samples):
+    z_dim = 10
+    hidden_dim = 32
+    epochs=10
+    lr=1e-3
 
-# 学習後のサンプリング
-with torch.no_grad():
-    # samples = model.generate(num_samples=10)
-    # print("Generated samples:", samples)
-    0
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = VAE(x_dim=2, z_dim=z_dim, hidden_dim=hidden_dim).to(device)
+
+    train_vae(model=model, z_dim=z_dim, epochs=epochs, lr=lr)
+
+    # 学習後のサンプリング
+    with torch.no_grad():
+        # samples = model.generate(num_samples=10)
+        # print("Generated samples:", samples)
+        z = torch.randn(num_samples, z_dim)
+        mu, logvar = model.decoder(z)
+        samples = model.reparameterize(mu, logvar)
+    
+    # 生成したサンプルを描画
+    plt.scatter(samples[:, 0], samples[:, 1])
+    plt.show()
+
+if __name__ == "__main__":
+    main(1000)
