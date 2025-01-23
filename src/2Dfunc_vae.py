@@ -137,10 +137,11 @@ def loss_function(
 # --------------------------------------------------------
 
 class VAE(nn.Module):
-    def __init__(self, x_dim:int = 2, z_dim:int = 2, hidden_dim:int = 32):
+    def __init__(self, x_dim:int = 2, z_dim:int = 2, hidden_dim:int = 32, energy_function: torch.Tensor = ring5.U_ring5):
         super(VAE, self).__init__()
         self.encoder = Encoder(x_dim, z_dim, hidden_dim)
         self.decoder = Decoder(z_dim, x_dim, hidden_dim)
+        self.energy_function = energy_function
 
     def forward(self, z: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         mu_z, logvar_z = self.decoder(z)
@@ -152,8 +153,7 @@ class VAE(nn.Module):
         mu_z, logvar_z = self.decoder(z_batch)
         x_batch = reparameterize(mu_z, logvar_z)
         mu_x, logvar_x = self.encoder(x_batch)
-        # return loss_function(x_batch, z_batch, mu_x, logvar_x, mu_z, logvar_z, ring5.U_ring5)
-        return loss_function(x_batch, z_batch, mu_x, logvar_x, mu_z, logvar_z, MoG9.U_MoG9)
+        return loss_function(x_batch, z_batch, mu_x, logvar_x, mu_z, logvar_z, self.energy_function)
 
 
 
@@ -179,7 +179,7 @@ def train_vae(model: VAE, z_dim: int = 2, epochs: int =10, batch_size: int = 64,
     print(f"Loss function: {loss_function}")
     # TODO Energy functionの指定方法を変える。train_vaeの引数に渡すか、model内に持たせるか。
     # 後者の場合は、model内に持たせるとして、model内にenergy_functionを持たせる。
-    print(f"Energy function: {ring5.U_ring5}")
+    print(f"Energy function: {model.energy_function}")
     print(f"Training...")
     for epoch in tqdm(range(epochs)): # 1エポックでQ(x|z)を更新する
         model.train()
@@ -199,44 +199,34 @@ def train_vae(model: VAE, z_dim: int = 2, epochs: int =10, batch_size: int = 64,
         losses.append(avg_loss)
     return losses
 
-def plot_loss_and_samples(now, losses, samples):
+def plot_loss_and_samples(now, losses, samples, batch_size):
     fig, axes = plt.subplots(1,2,figsize=(10,5))
 
-    plot_losses(now, losses, axes[0], False)
-    plot_samples(now, samples, axes[1], False)
+    plot_losses(now, losses, batch_size, axes[0])
+    plot_samples(now, samples, batch_size, axes[1])
     figname = f"training_curve_and_samples_{now}.png"
     dir = "../res/"
     filename = os.path.join(dir, figname)
     plt.savefig(filename)
 
-def plot_losses(now, losses, ax: plt.Axes, is_only=True):
+def plot_losses(now, losses, batch_size, ax: plt.Axes):
     epochs = list(range(1,len(losses)+1))
     ax.plot(epochs, losses, marker="o", linestyle="-", markersize=2)
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Loss")
     ax.set_title(f"Training curve: batch_size={batch_size}")
-    if is_only:
-        figname = f"training_curve_batch_size_{batch_size}_{now}.png"
-        dir = "../res/"
-        filename = os.path.join(dir, figname)
-        plt.savefig(filename)
 
-def plot_samples(now, samples, ax: plt.Axes, is_only=True):
+def plot_samples(now, samples, batch_size, ax: plt.Axes):
     ax.scatter(samples[:, 0], samples[:, 1], s=2)
     ax.set_xlabel("x1")
     ax.set_ylabel("x2")
     ax.set_title(f"Samples: batch_size={batch_size}")
-    if is_only:
-        figname = f"samples_batch_size_{batch_size}_{now}.png"
-        dir = "../res/"
-        filename = os.path.join(dir, figname)
-        plt.savefig(filename)
     
 # --------------------------------------------------------
 # 6. 実際に VAE を作って学習
 # --------------------------------------------------------
 
-def main(now, epochs, batch_size, num_samples, is_sampling=False):
+def main(now, epochs, batch_size, num_samples, energy_function, is_sampling=False):
     now = now.strftime('%Y%m%d_%H%M%S')
     z_dim = 10
     hidden_dim = 32
@@ -244,7 +234,7 @@ def main(now, epochs, batch_size, num_samples, is_sampling=False):
     lr=1e-3
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = VAE(x_dim=2, z_dim=z_dim, hidden_dim=hidden_dim).to(device)
+    model = VAE(x_dim=2, z_dim=z_dim, hidden_dim=hidden_dim, energy_function=energy_function).to(device)
 
     losses = train_vae(model=model, z_dim=z_dim, epochs=epochs, batch_size=batch_size, lr=lr)
 
@@ -254,12 +244,13 @@ def main(now, epochs, batch_size, num_samples, is_sampling=False):
             z = torch.randn(num_samples, z_dim)
             mu, logvar = model.decoder(z)
             samples = reparameterize(mu, logvar)
-        plot_loss_and_samples(now, losses, samples)
+        plot_loss_and_samples(now, losses, samples, batch_size)
 
 if __name__ == "__main__":
     num_samples = 1000
     epochs = 1000
     batch_size = 1000000
     now = datetime.datetime.now()
+    energy_function = ring5.U_ring5
 
-    main(now, epochs, batch_size, num_samples, True)
+    main(now, epochs, batch_size, num_samples, energy_function, True)
