@@ -12,8 +12,9 @@ def U_MoG2(data_batch: torch.Tensor) -> torch.Tensor:
     u_1 = 0.5 * ((x - mu1[0])**2 + (y - mu1[1])**2) / var
     u_2 = 0.5 * ((x - mu2[0])**2 + (y - mu2[1])**2) / var
     # logsumexp([-u1, -u2]): log(exp(-u_1) + exp(-u_2))
-    energies = -torch.logsumexp(-torch.stack([u_1, u_2], dim=1), dim=1)
-    return -energies.unsqueeze(1)
+    u_list = torch.stack([-u_1, -u_2], dim=1)
+    energies = -torch.logsumexp(u_list, dim=1) + np.log(2.0)
+    return energies.unsqueeze(1)
 
 def sampling_from_U_MoG2(n_sample):
     x_range = (-6,6)
@@ -43,8 +44,8 @@ def plot_U_MoG2():
     plt.show()
 
 def main():
-    # sampling_from_U_MoG2(1000)
-    plot_U_MoG2()
+    sampling_from_U_MoG2(1000)
+    # plot_U_MoG2()
 
 if __name__ == '__main__':
     main()
