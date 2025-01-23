@@ -2,8 +2,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import matplotlib.pyplot as plt
-from energyfunction import ring5
-from energyfunction import MoG2, MoG9
+from energyfunction import MoG2, MoG9, ring5
 from typing import Tuple
 from tqdm import tqdm
 import os
@@ -34,15 +33,6 @@ class Encoder(nn.Module):
         self.fc_logvar = nn.Linear(hidden_dim, z_dim)
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Args:
-            x (torch.Tensor): 入力データ (shape: [batch_size, x_dim])
-
-        Returns:
-            Tuple[torch.Tensor, torch.Tensor]: 平均ベクトル (mu_x) と対角共分散の対数 (logvar_x)
-            - mu_x: shape [batch_size, z_dim]
-            - logvar_x: shape [batch_size, z_dim]
-        """
         h = self.net(x)
         mu_x = self.fc_mu(h)
         logvar_x = self.fc_logvar(h)
@@ -79,10 +69,6 @@ class Decoder(nn.Module):
         return mu_z, logvar_z
 
 
-# --------------------------------------------------------
-# 2. VAE モデルの定義
-# --------------------------------------------------------
-
 def reparameterize(mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
     """
     Reparameterization trick:
@@ -94,7 +80,7 @@ def reparameterize(mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
     return mu + eps * std
 
 # --------------------------------------------------------
-# 3. 損失関数
+# 損失関数
 # mu_x: μ_φ(x), logvar_x: log(σ_φ^2(x))
 # mu_z: μ_θ(z), logvar_z: log(σ_θ^2(z))
 # --------------------------------------------------------
@@ -110,26 +96,25 @@ def loss_function(
 
     L2 = (x - μ_z)^2)/σ_z^2 + abs(σ_z^2) - 2U(x)
     
-    # x_batch: (batch_size, x_dim)
-    # z_batch: (batch_size, z_dim)
-    # mu_x: (batch_size, x_dim)
+    # x_batch : (batch_size, x_dim)
+    # z_batch : (batch_size, z_dim)
+    # mu_x    : (batch_size, x_dim)
     # logvar_x: (batch_size, x_dim)
-    # mu_z: (batch_size, z_dim)
+    # mu_z    : (batch_size, z_dim)
     # logvar_z: (batch_size, z_dim)
-    # U: (batch_size, 1)
+    # U       : (batch_size, 1)
     """
-    d = z_batch.shape[1] # z.shape: (batch_size, z_dim)
 
     # L1 = log(σ(x)^2) + (μ_x^2 + 1)/σ(x)^2
-    # L2 = (x - μ_z)^2)/σ_z^2 + abs(σ_z^2) + U(x)
+    # L2 = (x - μ_z)^2)/σ_z^2 + abs(σ_z^2) - 2U(x)
 
     L1 = torch.sum(logvar_x + (mu_x**2 + 1)/torch.exp(logvar_x))
 
-    L2 = torch.sum((x_batch - mu_z)**2/torch.exp(logvar_z))
+    L2  = torch.sum((x_batch - mu_z)**2/torch.exp(logvar_z))
     L2 += torch.sum(torch.abs(torch.exp(logvar_z)))
     L2 += -2.0*torch.sum(energy_function(x_batch))
 
-    return (L1 - L2)/len(x_batch)
+    return (L1 - L2)/len(z_batch)
 
 
 # --------------------------------------------------------
@@ -177,8 +162,6 @@ def train_vae(model: VAE, z_dim: int = 2, epochs: int =10, batch_size: int = 64,
     print(f"Decoder: {model.decoder}")
     print(f"Optimizer: {optimizer}")
     print(f"Loss function: {loss_function}")
-    # TODO Energy functionの指定方法を変える。train_vaeの引数に渡すか、model内に持たせるか。
-    # 後者の場合は、model内に持たせるとして、model内にenergy_functionを持たせる。
     print(f"Energy function: {model.energy_function}")
     print(f"Training...")
     for epoch in tqdm(range(epochs)): # 1エポックでQ(x|z)を更新する
@@ -195,7 +178,8 @@ def train_vae(model: VAE, z_dim: int = 2, epochs: int =10, batch_size: int = 64,
         
         total_loss += loss.item()
     
-        avg_loss = total_loss/batch_size
+        # avg_loss = total_loss/batch_size
+        avg_loss = total_loss
         losses.append(avg_loss)
     return losses
 
@@ -249,8 +233,8 @@ def main(now, epochs, batch_size, num_samples, energy_function, is_sampling=Fals
 if __name__ == "__main__":
     num_samples = 1000
     epochs = 1000
-    batch_size = 1000000
+    batch_size = 100000
     now = datetime.datetime.now()
-    energy_function = ring5.U_ring5
+    energy_function = MoG2.U_MoG2
 
     main(now, epochs, batch_size, num_samples, energy_function, True)
