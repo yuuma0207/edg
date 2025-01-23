@@ -17,7 +17,7 @@ class Encoder(nn.Module):
     def __init__(self, x_dim: int = 2, z_dim: int = 2, hidden_dim: int = 32):
         super(Encoder, self).__init__()
         
-        # 3層 MLP (各層 32ユニット, ReLU)        
+        # 3層 MLP (各層 32ユニット, ReLU)
         self.net = nn.Sequential(
             nn.Linear(x_dim, hidden_dim),
             nn.ReLU(),
